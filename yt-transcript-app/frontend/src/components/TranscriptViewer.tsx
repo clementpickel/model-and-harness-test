@@ -2,6 +2,7 @@ import { TranscriptLine } from '../types/video';
 
 interface TranscriptViewerProps {
   lines: TranscriptLine[];
+  viewMode: 'segmented' | 'full';
 }
 
 function formatTimestamp(seconds: number): string {
@@ -10,7 +11,16 @@ function formatTimestamp(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-export function TranscriptViewer({ lines }: TranscriptViewerProps) {
+export function TranscriptViewer({ lines, viewMode }: TranscriptViewerProps) {
+  if (viewMode === 'full') {
+    const fullText = lines.map(line => line.text).join(' ');
+    return (
+      <div className="max-h-[60vh] overflow-y-auto pr-2">
+        <p className="text-gray-300 leading-relaxed whitespace-pre-wrap">{fullText}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-2">
       {lines.map((line, index) => (

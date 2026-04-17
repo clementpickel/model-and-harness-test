@@ -51,10 +51,25 @@ def get_channel_videos(max_results: int = None) -> List[Video]:
 
         videos = []
         for entry in entries:
+            # Extract best thumbnail from yt-dlp thumbnail list
+            # yt-dlp doesn't use 'id' field — select by resolution
+            thumbnail = None
+            thumbnails = entry.get('thumbnails') or []
+            if thumbnails:
+                # Sort by area (height * width) descending, pick ~medium range (180-360 height)
+                valid = [t for t in thumbnails if t.get('height', 0) >= 180 and t.get('height', 999) <= 400]
+                if valid:
+                    valid.sort(key=lambda t: t.get('height', 0) * t.get('width', 0), reverse=True)
+                    thumbnail = valid[0].get('url')
+                if not thumbnail:
+                    # Fall back to largest thumbnail available
+                    thumbnails.sort(key=lambda t: t.get('height', 0) * t.get('width', 0), reverse=True)
+                    thumbnail = thumbnails[0].get('url')
+
             videos.append(Video(
                 id=entry.get('id', ''),
                 title=entry.get('title', 'Unknown'),
-                thumbnail=entry.get('thumbnail'),
+                thumbnail=thumbnail,
                 upload_date=entry.get('upload_date'),
                 duration=entry.get('duration'),
                 has_transcript=False  # Will be updated when fetching transcript

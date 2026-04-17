@@ -25,6 +25,7 @@ export default function App() {
   } = useVideos();
 
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [transcriptView, setTranscriptView] = useState<'segmented' | 'full'>('segmented');
   const { transcript, isLoading: transcriptLoading, error: transcriptError } = useTranscript(
     selectedVideo?.id || null
   );
@@ -139,10 +140,35 @@ export default function App() {
 
         {transcript && !transcriptLoading && (
           <div>
-            <p className="text-sm text-gray-500 mb-4">
-              {transcript.lines.length} segments
-            </p>
-            <TranscriptViewer lines={transcript.lines} />
+            {/* View toggle */}
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm text-gray-500">
+                {transcript.lines.length} segments
+              </p>
+              <div className="flex bg-dark-700 rounded-lg p-1">
+                <button
+                  onClick={() => setTranscriptView('segmented')}
+                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                    transcriptView === 'segmented'
+                      ? 'bg-accent-purple text-white'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Segmented
+                </button>
+                <button
+                  onClick={() => setTranscriptView('full')}
+                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                    transcriptView === 'full'
+                      ? 'bg-accent-purple text-white'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Full Text
+                </button>
+              </div>
+            </div>
+            <TranscriptViewer lines={transcript.lines} viewMode={transcriptView} />
           </div>
         )}
       </Modal>
