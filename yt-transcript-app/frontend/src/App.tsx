@@ -31,7 +31,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-light-50">
+    <div className="min-h-screen bg-white">
       {/* Background gradient */}
       <div className="fixed inset-0 bg-gradient-to-br from-accent-purple/5 via-transparent to-accent-blue/5 pointer-events-none" />
 
@@ -41,7 +41,7 @@ export default function App() {
           <div className="max-w-7xl mx-auto px-4 py-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-accent-purple to-accent-blue bg-clip-text text-transparent">
+                <h1 className="text-2xl font-bold text-gray-900">
                   bycloudAI Transcripts
                 </h1>
                 <p className="text-sm text-gray-500 mt-1">
@@ -53,9 +53,9 @@ export default function App() {
                 <button
                   onClick={refresh}
                   disabled={isLoading}
-                  className="flex items-center gap-2 px-4 py-2 bg-accent-purple hover:bg-accent-purple/80
-                             disabled:bg-accent-purple/50 text-white rounded-lg transition-all duration-200
-                             shadow-lg shadow-accent-purple/20"
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-900 hover:bg-black
+                             disabled:bg-gray-400 text-white rounded-lg transition-all duration-200
+                             shadow-lg"
                 >
                   <svg className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}

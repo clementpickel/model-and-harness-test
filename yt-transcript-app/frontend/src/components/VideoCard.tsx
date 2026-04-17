@@ -25,8 +25,8 @@ export function VideoCard({ video, onClick }: VideoCardProps) {
       onClick={onClick}
       className="group relative bg-white rounded-xl overflow-hidden cursor-pointer
                  transform transition-all duration-300 hover:scale-105
-                 border border-light-300 hover:border-accent-purple/50
-                 shadow-sm hover:shadow-accent-purple/20"
+                 border border-gray-900 hover:border-gray-900
+                 shadow-sm hover:shadow-md"
     >
       {/* Thumbnail */}
       <div className="relative aspect-video bg-light-100 overflow-hidden">
