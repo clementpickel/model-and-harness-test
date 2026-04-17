@@ -2,11 +2,20 @@ from pydantic_settings import BaseSettings
 from pathlib import Path
 
 
+class ChannelConfig(BaseSettings):
+    name: str
+    url: str
+
+
 class Settings(BaseSettings):
-    cache_ttl_seconds: int = 300  # 5 minutes default for active refresh
+    cache_ttl_seconds: int = 300
     cache_dir: str = "/tmp/video_cache"
-    channel_url: str = "https://www.youtube.com/@bycloudAI/videos"
-    max_videos: int = 50
+    channels: list[ChannelConfig] = [
+        ChannelConfig(name="bycloudAI", url="https://www.youtube.com/@bycloudAI/videos"),
+        ChannelConfig(name="Fireship", url="https://www.youtube.com/@Fireship/videos"),
+        ChannelConfig(name="T3", url="https://www.youtube.com/@t3dotgg/videos"),
+    ]
+    max_videos_per_channel: int = 50
 
 
 settings = Settings()

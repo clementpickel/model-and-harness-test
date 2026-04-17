@@ -5,6 +5,7 @@ export interface Video {
   upload_date: string | null;
   duration: number | null;
   has_transcript: boolean;
+  youtuber: string;
 }
 
 export interface TranscriptLine {

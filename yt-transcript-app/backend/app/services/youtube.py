@@ -36,17 +36,17 @@ def _parse_json3_subtitles(subtitle_data: Dict[str, Any]) -> List[TranscriptLine
     return lines
 
 
-def get_channel_videos(max_results: int = None) -> List[Video]:
-    """Fetch list of videos from the YouTube channel."""
+def get_channel_videos(channel_name: str, channel_url: str, max_results: int = None) -> List[Video]:
+    """Fetch list of videos from a YouTube channel, tagged with channel name."""
     opts = {
         'quiet': True,
         'extract_flat': True,
-        'playlistend': max_results or settings.max_videos,
+        'playlistend': max_results or settings.max_videos_per_channel,
         'skip_download': True,
     }
 
     with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(settings.channel_url, download=False)
+        info = ydl.extract_info(channel_url, download=False)
         entries = info.get('entries', []) or []
 
         videos = []
@@ -72,7 +72,8 @@ def get_channel_videos(max_results: int = None) -> List[Video]:
                 thumbnail=thumbnail,
                 upload_date=entry.get('upload_date'),
                 duration=entry.get('duration'),
-                has_transcript=False  # Will be updated when fetching transcript
+                has_transcript=False,
+                youtuber=channel_name,
             ))
 
         return videos

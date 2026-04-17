@@ -26,9 +26,21 @@ export default function App() {
 
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [transcriptView, setTranscriptView] = useState<'segmented' | 'full'>('segmented');
+  const [selectedYoutuber, setSelectedYoutuber] = useState<string>('All');
   const { transcript, isLoading: transcriptLoading, error: transcriptError } = useTranscript(
     selectedVideo?.id || null
   );
+
+  // Collect unique youtubers from video list
+  const youtubers = ['All', ...Array.from(new Set(videos.map(v => v.youtuber)))];
+
+  // Filter videos by selected youtuber and search query
+  const filteredVideos = videos.filter(video => {
+    const matchesYoutuber = selectedYoutuber === 'All' || video.youtuber === selectedYoutuber;
+    const matchesSearch = !searchQuery ||
+      video.title.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesYoutuber && matchesSearch;
+  });
 
   return (
     <div className="min-h-screen bg-white">
@@ -42,7 +54,7 @@ export default function App() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">
-                  bycloudAI Transcripts
+                  YT Transcripts
                 </h1>
                 <p className="text-sm text-gray-500 mt-1">
                   Last updated: {formatLastUpdated(lastUpdated)}
@@ -74,6 +86,25 @@ export default function App() {
                 placeholder="Search by video title..."
               />
             </div>
+
+            {/* Youtuber filter pills */}
+            {!isLoading && youtubers.length > 1 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {youtubers.map(youtuber => (
+                  <button
+                    key={youtuber}
+                    onClick={() => setSelectedYoutuber(youtuber)}
+                    className={`px-4 py-1.5 text-sm rounded-full border transition-colors ${
+                      selectedYoutuber === youtuber
+                        ? 'bg-gray-900 text-white border-gray-900'
+                        : 'bg-white text-gray-700 border-gray-300 hover:border-gray-900'
+                    }`}
+                  >
+                    {youtuber}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </header>
 
@@ -96,7 +127,7 @@ export default function App() {
           {/* Video Grid */}
           {!isLoading && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {videos.map(video => (
+              {filteredVideos.map(video => (
                 <VideoCard
                   key={video.id}
                   video={video}
@@ -107,7 +138,7 @@ export default function App() {
           )}
 
           {/* Empty State */}
-          {!isLoading && videos.length === 0 && !error && (
+          {!isLoading && filteredVideos.length === 0 && !error && (
             <div className="flex flex-col items-center justify-center min-h-[50vh] text-center">
               <svg className="w-16 h-16 text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}

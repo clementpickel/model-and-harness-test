@@ -16,6 +16,7 @@ class Video(BaseModel):
     upload_date: Optional[str] = None
     duration: Optional[int] = None
     has_transcript: bool = False
+    youtuber: str = "unknown"
 
 
 class VideoListResponse(BaseModel):

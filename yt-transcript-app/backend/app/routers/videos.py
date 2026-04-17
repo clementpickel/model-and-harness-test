@@ -3,45 +3,55 @@ from datetime import datetime
 from app.schemas.video import VideoListResponse, TranscriptResponse
 from app.services.youtube import get_channel_videos, get_video_transcript
 from app.services.cache import get_cache
+from app.config import settings
 
 
 router = APIRouter(prefix="/api", tags=["videos"])
 
 
-def _fetch_and_cache_videos():
-    """Background task to fetch videos and update cache."""
+def _fetch_and_cache_videos_for_channel(channel_name: str, channel_url: str):
+    """Background task to fetch videos for one channel and update its cache."""
     cache = get_cache()
-    videos = get_channel_videos()
-
-    # Update has_transcript for each video
+    videos = get_channel_videos(channel_name, channel_url)
     for video in videos:
-        video.has_transcript = True  # Assume true, will be verified on request
+        video.has_transcript = True  # Will be verified on request
+    cache.set(f"videos_{channel_name}", videos)
+    cache.set(f"last_updated_{channel_name}", datetime.utcnow().isoformat())
 
-    cache.set("videos", videos)
-    cache.set("last_updated", datetime.utcnow().isoformat())
+
+def _fetch_and_cache_all_videos():
+    """Background task to fetch videos from all channels."""
+    for channel in settings.channels:
+        _fetch_and_cache_videos_for_channel(channel.name, channel.url)
 
 
 @router.get("/videos", response_model=VideoListResponse)
 async def get_videos():
-    """Get list of videos from the channel."""
+    """Get list of videos from all channels."""
     cache = get_cache()
+    all_videos = []
+    latest_update = None
 
-    videos = cache.get("videos")
-    last_updated_str = cache.get("last_updated")
+    for channel in settings.channels:
+        videos = cache.get(f"videos_{channel.name}")
+        updated_str = cache.get(f"last_updated_{channel.name}")
 
-    if videos is None:
-        # First-time fetch
-        _fetch_and_cache_videos()
-        videos = cache.get("videos")
-        last_updated_str = cache.get("last_updated")
+        if videos is None:
+            # First-time fetch for this channel
+            _fetch_and_cache_videos_for_channel(channel.name, channel.url)
+            videos = cache.get(f"videos_{channel.name}")
+            updated_str = cache.get(f"last_updated_{channel.name}")
 
-    last_updated = None
-    if last_updated_str:
-        last_updated = datetime.fromisoformat(last_updated_str)
+        all_videos.extend(videos or [])
+
+        if updated_str:
+            updated = datetime.fromisoformat(updated_str)
+            if latest_update is None or updated > latest_update:
+                latest_update = updated
 
     return VideoListResponse(
-        videos=videos or [],
-        last_updated=last_updated
+        videos=all_videos,
+        last_updated=latest_update
     )
 
 
@@ -69,12 +79,13 @@ async def get_transcript(video_id: str):
 
 @router.post("/refresh")
 async def refresh_videos(background_tasks: BackgroundTasks):
-    """Trigger a background refresh of video list."""
+    """Trigger a background refresh of all video lists."""
     cache = get_cache()
-    cache.delete("videos")
-    cache.delete("last_updated")
+    for channel in settings.channels:
+        cache.delete(f"videos_{channel.name}")
+        cache.delete(f"last_updated_{channel.name}")
 
-    background_tasks.add_task(_fetch_and_cache_videos)
+    background_tasks.add_task(_fetch_and_cache_all_videos)
 
     return {"status": "refresh_started"}
 
@@ -83,9 +94,7 @@ async def refresh_videos(background_tasks: BackgroundTasks):
 async def health_check():
     """Health check endpoint."""
     cache = get_cache()
-    last_updated = cache.get("last_updated")
     return {
         "status": "healthy",
-        "cache_ttl": cache.get_mtime("videos"),
-        "last_updated": last_updated
+        "channels": [c.name for c in settings.channels],
     }
