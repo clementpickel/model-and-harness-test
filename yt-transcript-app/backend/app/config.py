@@ -15,7 +15,7 @@ class Settings(BaseSettings):
         ChannelConfig(name="Fireship", url="https://www.youtube.com/@Fireship/videos"),
         ChannelConfig(name="T3", url="https://www.youtube.com/@t3dotgg/videos"),
     ]
-    max_videos_per_channel: int = 50
+    max_videos_per_channel: int = 10
 
 
 settings = Settings()

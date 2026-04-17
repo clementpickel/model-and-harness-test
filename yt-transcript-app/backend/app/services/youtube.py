@@ -40,7 +40,7 @@ def get_channel_videos(channel_name: str, channel_url: str, max_results: int = N
     """Fetch list of videos from a YouTube channel, tagged with channel name."""
     opts = {
         'quiet': True,
-        'extract_flat': True,
+        'extract_flat': False,
         'playlistend': max_results or settings.max_videos_per_channel,
         'skip_download': True,
     }
@@ -51,8 +51,7 @@ def get_channel_videos(channel_name: str, channel_url: str, max_results: int = N
 
         videos = []
         for entry in entries:
-            # Extract best thumbnail from yt-dlp thumbnail list
-            # yt-dlp doesn't use 'id' field — select by resolution
+            # yt-dlp populates upload_date only when extract_flat=False
             thumbnail = None
             thumbnails = entry.get('thumbnails') or []
             if thumbnails:

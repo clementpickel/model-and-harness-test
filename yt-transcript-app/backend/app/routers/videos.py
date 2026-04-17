@@ -49,11 +49,12 @@ async def get_videos():
             if latest_update is None or updated > latest_update:
                 latest_update = updated
 
-    # Sort by upload_date descending (most recent first)
-    all_videos.sort(
-        key=lambda v: v.upload_date or '00000000',
-        reverse=True
-    )
+    # Sort by upload_date descending (most recent first), handle both dict and model
+    def sort_key(v):
+        date = v.upload_date if hasattr(v, 'upload_date') else v.get('upload_date')
+        return date or '00000000'
+
+    all_videos.sort(key=sort_key, reverse=True)
 
     return VideoListResponse(
         videos=all_videos,
