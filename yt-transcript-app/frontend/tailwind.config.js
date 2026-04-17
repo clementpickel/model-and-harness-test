@@ -7,10 +7,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        dark: {
-          900: '#0f0f1a',
-          800: '#1a1a2e',
-          700: '#16213e',
+        light: {
+          50: '#f8f9fc',
+          100: '#f1f3f8',
+          200: '#e4e8f0',
+          300: '#cdd4e0',
         },
         accent: {
           purple: '#7c3aed',

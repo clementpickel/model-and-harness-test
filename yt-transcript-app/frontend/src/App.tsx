@@ -31,13 +31,13 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-dark-900">
+    <div className="min-h-screen bg-light-50">
       {/* Background gradient */}
       <div className="fixed inset-0 bg-gradient-to-br from-accent-purple/5 via-transparent to-accent-blue/5 pointer-events-none" />
 
       <div className="relative z-10">
         {/* Header */}
-        <header className="sticky top-0 z-40 bg-dark-900/80 backdrop-blur-lg border-b border-gray-800">
+        <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-lg border-b border-light-300 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 py-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
@@ -81,8 +81,8 @@ export default function App() {
         <main className="max-w-7xl mx-auto px-4 py-8">
           {/* Error State */}
           {error && (
-            <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 mb-8">
-              <p className="text-red-400">{error}</p>
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-8">
+              <p className="text-red-600">{error}</p>
             </div>
           )}
 
@@ -133,8 +133,8 @@ export default function App() {
         )}
 
         {transcriptError && (
-          <div className="bg-red-900/20 border border-red-800 rounded-xl p-4">
-            <p className="text-red-400">{transcriptError}</p>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+            <p className="text-red-600">{transcriptError}</p>
           </div>
         )}
 
@@ -145,13 +145,13 @@ export default function App() {
               <p className="text-sm text-gray-500">
                 {transcript.lines.length} segments
               </p>
-              <div className="flex bg-dark-700 rounded-lg p-1">
+              <div className="flex bg-light-200 rounded-lg p-1">
                 <button
                   onClick={() => setTranscriptView('segmented')}
                   className={`px-3 py-1 text-sm rounded-md transition-colors ${
                     transcriptView === 'segmented'
                       ? 'bg-accent-purple text-white'
-                      : 'text-gray-400 hover:text-white'
+                      : 'text-gray-500 hover:text-gray-800'
                   }`}
                 >
                   Segmented
@@ -161,7 +161,7 @@ export default function App() {
                   className={`px-3 py-1 text-sm rounded-md transition-colors ${
                     transcriptView === 'full'
                       ? 'bg-accent-purple text-white'
-                      : 'text-gray-400 hover:text-white'
+                      : 'text-gray-500 hover:text-gray-800'
                   }`}
                 >
                   Full Text

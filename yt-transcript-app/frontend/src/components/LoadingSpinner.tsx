@@ -12,7 +12,7 @@ export function LoadingSpinner({ size = 'md', message }: LoadingSpinnerProps) {
 
   return (
     <div className="flex flex-col items-center justify-center gap-4">
-      <div className={`${sizeClasses[size]} border-2 border-accent-purple/30 border-t-accent-purple rounded-full animate-spin`} />
+      <div className={`${sizeClasses[size]} border-2 border-accent-purple/20 border-t-accent-purple rounded-full animate-spin`} />
       {message && <p className="text-gray-500 text-sm">{message}</p>}
     </div>
   );
