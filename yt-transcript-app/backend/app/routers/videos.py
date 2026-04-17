@@ -49,6 +49,12 @@ async def get_videos():
             if latest_update is None or updated > latest_update:
                 latest_update = updated
 
+    # Sort by upload_date descending (most recent first)
+    all_videos.sort(
+        key=lambda v: v.upload_date or '00000000',
+        reverse=True
+    )
+
     return VideoListResponse(
         videos=all_videos,
         last_updated=latest_update
