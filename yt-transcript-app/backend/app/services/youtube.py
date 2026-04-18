@@ -1,9 +1,13 @@
+import asyncio
+import logging
 import yt_dlp
 import urllib.request
 import json
 from typing import List, Optional, Dict, Any
 from app.config import settings
 from app.schemas.video import Video, TranscriptLine
+
+logger = logging.getLogger(__name__)
 
 
 def _fetch_subtitle_json3(url: str) -> Optional[Dict[str, Any]]:
@@ -12,7 +16,7 @@ def _fetch_subtitle_json3(url: str) -> Optional[Dict[str, Any]]:
         with urllib.request.urlopen(url, timeout=15) as resp:
             return json.loads(resp.read().decode('utf-8'))
     except Exception as e:
-        print(f"Error fetching subtitle JSON3: {e}")
+        logger.warning("Error fetching subtitle JSON3: %s", e)
         return None
 
 
@@ -36,6 +40,36 @@ def _parse_json3_subtitles(subtitle_data: Dict[str, Any]) -> List[TranscriptLine
     return lines
 
 
+def _check_transcript_for_video(video_id: str) -> bool:
+    """
+    Check if a video has English subtitles (manual or automatic).
+    Makes a lightweight yt-dlp call with listsubtitles.
+    """
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    opts = {
+        'quiet': True,
+        'skip_download': True,
+        'extract_flat': False,
+        'listsubtitles': True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            auto_subs = info.get('automatic_captions', {})
+            manual_subs = info.get('subtitles', {})
+            has_en = 'en' in auto_subs or 'en' in manual_subs
+            logger.debug("Video %s transcript check: %s", video_id, has_en)
+            return has_en
+    except Exception as e:
+        logger.warning("Transcript check failed for %s: %s", video_id, e)
+        return False
+
+
+async def _check_transcript_thread(video_id: str) -> bool:
+    """Thread-pool wrapper for _check_transcript_for_video."""
+    return await asyncio.to_thread(_check_transcript_for_video, video_id)
+
+
 def get_channel_videos(channel_name: str, channel_url: str, max_results: int = None) -> List[Video]:
     """Fetch list of videos from a YouTube channel, tagged with channel name."""
     opts = {
@@ -51,17 +85,15 @@ def get_channel_videos(channel_name: str, channel_url: str, max_results: int = N
 
         videos = []
         for entry in entries:
-            # yt-dlp populates upload_date only when extract_flat=False
             thumbnail = None
             thumbnails = entry.get('thumbnails') or []
             if thumbnails:
-                # Sort by area (height * width) descending, pick ~medium range (180-360 height)
-                valid = [t for t in thumbnails if t.get('height', 0) >= 180 and t.get('height', 999) <= 400]
+                # Pick ~medium range thumbnail (180-360 height) with largest area
+                valid = [t for t in thumbnails if 180 <= t.get('height', 0) <= 400]
                 if valid:
                     valid.sort(key=lambda t: t.get('height', 0) * t.get('width', 0), reverse=True)
                     thumbnail = valid[0].get('url')
                 if not thumbnail:
-                    # Fall back to largest thumbnail available
                     thumbnails.sort(key=lambda t: t.get('height', 0) * t.get('width', 0), reverse=True)
                     thumbnail = thumbnails[0].get('url')
 
@@ -71,11 +103,41 @@ def get_channel_videos(channel_name: str, channel_url: str, max_results: int = N
                 thumbnail=thumbnail,
                 upload_date=entry.get('upload_date'),
                 duration=entry.get('duration'),
-                has_transcript=False,
+                has_transcript=False,  # Will be updated after transcript check
                 youtuber=channel_name,
             ))
 
         return videos
+
+
+async def get_channel_videos_with_transcript_check(
+    channel_name: str, channel_url: str, max_results: int = None
+) -> List[Video]:
+    """
+    Fetch channel videos AND concurrently check transcript availability for each.
+    Returns videos with has_transcript=True/False accurately set.
+    """
+    videos = await asyncio.to_thread(
+        get_channel_videos, channel_name, channel_url, max_results
+    )
+
+    if not videos:
+        return videos
+
+    # Check transcripts concurrently — each call is independent
+    results = await asyncio.gather(
+        *(_check_transcript_thread(v.id) for v in videos),
+        return_exceptions=True,
+    )
+
+    for video, result in zip(videos, results):
+        if isinstance(result, Exception):
+            logger.warning("Transcript check exception for %s: %s", video.id, result)
+            video.has_transcript = False
+        else:
+            video.has_transcript = result
+
+    return videos
 
 
 def get_video_transcript(video_id: str) -> Optional[Dict[str, Any]]:
@@ -107,6 +169,7 @@ def get_video_transcript(video_id: str) -> Optional[Dict[str, Any]]:
                     break
 
             if not en_subs:
+                logger.debug("No English subtitles found for %s", video_id)
                 return None
 
             # Find JSON3 format URL
@@ -133,26 +196,10 @@ def get_video_transcript(video_id: str) -> Optional[Dict[str, Any]]:
             }
 
     except Exception as e:
-        print(f"Error fetching transcript for {video_id}: {e}")
+        logger.error("Error fetching transcript for %s: %s", video_id, e)
         return None
 
 
 def check_video_has_transcript(video_id: str) -> bool:
-    """Check if a video has available transcripts."""
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
-
-    opts = {
-        'quiet': True,
-        'skip_download': True,
-        'extract_flat': False,
-        'listsubtitles': True,
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            auto_subs = info.get('automatic_captions', {})
-            manual_subs = info.get('subtitles', {})
-            return 'en' in auto_subs or 'en' in manual_subs
-    except Exception:
-        return False
+    """Check if a video has available transcripts (manual or auto, English)."""
+    return _check_transcript_for_video(video_id)

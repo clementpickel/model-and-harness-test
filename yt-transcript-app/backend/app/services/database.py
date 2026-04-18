@@ -3,21 +3,24 @@ SQLite-backed persistent cache for the YouTube transcript app.
 
 Schema
 ------
-  videos_cache   — serialized video list per channel (mirrors old JSON files)
-  transcripts    — parsed transcript lines per video_id (no TTL, persistent)
-  metadata       — last_updated timestamps and TTL flags
+  videos         — video metadata keyed by video_id (persistent, incremental refresh)
+  transcripts    — parsed transcript lines per video_id (permanent once cached)
+  metadata       — refresh bookkeeping (refreshed_at per channel)
 
-The CacheService interface (get / set / delete / clear) is preserved so the
-router needs zero changes beyond swapping the import.
+No TTL on videos — refresh is incremental (only new videos) so old data is preserved.
+Transcripts are permanently cached; a 404 means no transcript (cached as such).
 """
 
 import json
-import time
 import datetime
+import asyncio
 import aiosqlite
+import logging
 from pathlib import Path
 from typing import Optional, Any
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -35,26 +38,16 @@ def _serialize(value: Any) -> Any:
     return value
 
 
-def _is_expired(fetched_at: str, ttl_seconds: int) -> bool:
-    """Return True when the stored ISO timestamp is older than ttl_seconds."""
-    try:
-        fetched_dt = datetime.datetime.fromisoformat(fetched_at)
-        age = (datetime.datetime.utcnow() - fetched_dt).total_seconds()
-        return age > ttl_seconds
-    except Exception:
-        return True   # Treat malformed dates as expired.
-
-
 # ── service ──────────────────────────────────────────────────────────────────
 
 class CacheService:
     """
-    Drop-in replacement for the file-based CacheService.
+    SQLite-backed cache with incremental video refresh.
 
-    Routes key → table:
-      videos_{channel}       → videos_cache  (TTL: cache_ttl_seconds)
-      transcript_{video_id} → transcripts  (no TTL — permanent)
-      last_updated_{channel} → metadata    (driven by videos_cache writes)
+    Key schema:
+      transcript_{video_id}  → transcripts table  (permanent once set)
+      last_updated_{channel} → metadata table     (ISO timestamp)
+      refreshed_at_{channel} → metadata table     (ISO timestamp of last refresh)
     """
 
     def __init__(self, db_path: str = None):
@@ -65,31 +58,54 @@ class CacheService:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     async def initialize(self) -> None:
-        """Call once at startup. Creates tables and handles WAL mode."""
+        """Call once at startup. Creates tables and handles WAL mode.
+
+        Migration: if old per-channel videos_cache table exists (JSON blobs),
+        rename it so the new per-video videos table can be created cleanly.
+        """
         conn = await aiosqlite.connect(str(self._db_path))
         conn.row_factory = aiosqlite.Row
         self._conn = conn
+
+        # Migrate legacy schema if needed
+        await conn.executescript("""
+            -- If the old per-channel JSON cache exists, archive it
+            ALTER TABLE IF EXISTS videos_cache RENAME TO _legacy_videos_cache;
+
+            -- Same for legacy metadata
+            ALTER TABLE IF EXISTS metadata RENAME TO _legacy_metadata;
+        """)
+        await conn.commit()
+
         await conn.executescript("""
             PRAGMA journal_mode = WAL;
 
-            CREATE TABLE IF NOT EXISTS videos_cache (
-                channel_name TEXT PRIMARY KEY,
-                videos_json  TEXT NOT NULL,
-                fetched_at   TEXT NOT NULL          -- ISO 8601
+            CREATE TABLE IF NOT EXISTS videos (
+                video_id      TEXT PRIMARY KEY,
+                channel_name  TEXT NOT NULL,
+                title         TEXT NOT NULL,
+                thumbnail     TEXT,
+                upload_date   TEXT,
+                duration      INTEGER,
+                has_transcript INTEGER NOT NULL DEFAULT 0,
+                fetched_at    TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS transcripts (
                 video_id     TEXT PRIMARY KEY,
                 video_title  TEXT NOT NULL,
-                lines_json   TEXT NOT NULL,         -- JSON array of TranscriptLine
+                lines_json   TEXT NOT NULL,
                 fetched_at   TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS metadata (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                key          TEXT PRIMARY KEY,
+                value        TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS idx_videos_channel ON videos(channel_name);
+            CREATE INDEX IF NOT EXISTS idx_videos_upload_date ON videos(upload_date);
         """)
         await conn.commit()
 
@@ -98,7 +114,7 @@ class CacheService:
             await self._conn.close()
             self._conn = None
 
-    # ── internal cursor ──────────────────────────────────────────────────────
+    # ── internal ──────────────────────────────────────────────────────────────
 
     async def _execute(self, sql: str, params=()):
         if self._conn is None:
@@ -111,74 +127,134 @@ class CacheService:
     # ── public API ────────────────────────────────────────────────────────────
 
     async def get(self, key: str) -> Optional[Any]:
-        """Return the deserialised value or None if missing / expired."""
+        """Return the deserialised value or None if missing."""
         if key.startswith("videos_"):
-            return await self._get_videos_cache(key[len("videos_") :])
+            return await self._get_videos_by_channel(key[len("videos_") :])
         if key.startswith("transcript_"):
             return await self._get_transcript(key[len("transcript_") :])
-        if key.startswith("last_updated_"):
-            return await self._get_meta(f"last_updated_{key[len('last_updated_'):]}")
+        if key.startswith("last_updated_") or key.startswith("refreshed_at_"):
+            return await self._get_meta(key)
         return None
 
     async def set(self, key: str, value: Any) -> None:
-        """Store a value.  TTL is enforced on reads, not writes."""
+        """Store a value."""
         serialized = _serialize(value)
         if key.startswith("videos_"):
-            await self._set_videos_cache(key[len("videos_") :], serialized)
+            # videos are stored individually via upsert_video; this is a no-op
+            # to keep the interface compatible with the old file-based cache
+            pass
         elif key.startswith("transcript_"):
             await self._set_transcript(key[len("transcript_") :], serialized)
         elif key.startswith("last_updated_"):
-            await self._set_meta(f"last_updated_{key[len('last_updated_'):]}", serialized)
+            await self._set_meta(key, serialized)
+        elif key.startswith("refreshed_at_"):
+            await self._set_meta(key, serialized)
 
     async def delete(self, key: str) -> None:
-        if key.startswith("videos_"):
-            await self._delete_videos_cache(key[len("videos_") :])
-        elif key.startswith("transcript_"):
+        if key.startswith("transcript_"):
             await self._delete_transcript(key[len("transcript_") :])
-        elif key.startswith("last_updated_"):
-            await self._delete_meta(f"last_updated_{key[len('last_updated_'):]}")
+        elif key.startswith("last_updated_") or key.startswith("refreshed_at_"):
+            await self._delete_meta(key)
 
     async def clear(self) -> None:
-        await self._execute("DELETE FROM videos_cache")
+        """Clear all data — videos, transcripts, and metadata."""
+        await self._execute("DELETE FROM videos")
         await self._execute("DELETE FROM transcripts")
         await self._execute("DELETE FROM metadata")
         await self._commit()
 
-    # ── videos_cache ─────────────────────────────────────────────────────────
+    # ── videos ────────────────────────────────────────────────────────────────
 
-    async def _get_videos_cache(self, channel: str) -> Optional[list]:
-        row = await self._execute(
-            "SELECT videos_json, fetched_at FROM videos_cache WHERE channel_name = ?",
+    async def upsert_video(self, video_id: str, channel_name: str, title: str,
+                           thumbnail: Optional[str], upload_date: Optional[str],
+                           duration: Optional[int], has_transcript: bool) -> None:
+        """Insert or replace a video. Idempotent — safe to call repeatedly."""
+        now = datetime.datetime.utcnow().isoformat()
+        await self._execute("""
+            INSERT OR REPLACE INTO videos
+              (video_id, channel_name, title, thumbnail, upload_date, duration, has_transcript, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (video_id, channel_name, title, thumbnail, upload_date, duration,
+              1 if has_transcript else 0, now))
+        await self._commit()
+
+    async def upsert_videos_batch(
+        self, videos: list, channel_name: str
+    ) -> int:
+        """
+        Batch upsert a list of videos. Returns the number of newly inserted videos.
+        Uses INSERT OR IGNORE so existing rows are preserved.
+        """
+        now = datetime.datetime.utcnow().isoformat()
+        rows = [
+            (v.id, channel_name, v.title, v.thumbnail, v.upload_date, v.duration,
+             1 if v.has_transcript else 0, now)
+            for v in videos
+        ]
+        await self._executemany("""
+            INSERT OR IGNORE INTO videos
+              (video_id, channel_name, title, thumbnail, upload_date, duration, has_transcript, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+        await self._commit()
+        # Count how many were actually inserted
+        cursor = await self._execute(
+            "SELECT COUNT(*) FROM videos WHERE channel_name = ? AND fetched_at = ?",
+            (channel_name, now)
+        )
+        row = await cursor.fetchone()
+        return row["COUNT(*)"] if row else 0
+
+    async def _get_videos_by_channel(self, channel: str) -> Optional[list]:
+        cursor = await self._execute(
+            """SELECT video_id, channel_name, title, thumbnail, upload_date,
+                      duration, has_transcript, fetched_at
+               FROM videos WHERE channel_name = ?
+               ORDER BY upload_date DESC, fetched_at DESC""",
             (channel,),
         )
-        result = await row.fetchone()
-        if result is None:
+        rows = await cursor.fetchall()
+        if not rows:
             return None
-        videos_json, fetched_at = result["videos_json"], result["fetched_at"]
-        if _is_expired(fetched_at, settings.cache_ttl_seconds):
-            await self._delete_videos_cache(channel)
-            return None
-        return json.loads(videos_json)
+        return [dict(r) for r in rows]
 
-    async def _set_videos_cache(self, channel: str, videos: list) -> None:
-        now = datetime.datetime.utcnow().isoformat()
-        await self._execute(
-            """
-            INSERT OR REPLACE INTO videos_cache (channel_name, videos_json, fetched_at)
-            VALUES (?, ?, ?)
-            """,
-            (channel, json.dumps(videos), now),
+    async def get_all_videos(self) -> list:
+        """Return all videos across all channels, sorted by upload_date descending."""
+        cursor = await self._execute(
+            """SELECT video_id, channel_name, title, thumbnail, upload_date,
+                      duration, has_transcript, fetched_at
+               FROM videos
+               ORDER BY upload_date DESC, fetched_at DESC"""
         )
-        # Keep last_updated in sync
-        await self._set_meta(f"last_updated_{channel}", now)
-        await self._commit()
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
 
-    async def _delete_videos_cache(self, channel: str) -> None:
-        await self._execute("DELETE FROM videos_cache WHERE channel_name = ?", (channel,))
-        await self._delete_meta(f"last_updated_{channel}")
-        await self._commit()
+    async def get_max_upload_date(self, channel_name: str) -> Optional[str]:
+        """Return the most recent upload_date we have for a channel."""
+        cursor = await self._execute(
+            "SELECT MAX(upload_date) as max_date FROM videos WHERE channel_name = ?",
+            (channel_name,),
+        )
+        row = await cursor.fetchone()
+        return row["max_date"] if row else None
 
-    # ── transcripts ───────────────────────────────────────────────────────────
+    async def get_channel_last_updated(self, channel_name: str) -> Optional[str]:
+        """Return the fetched_at timestamp of the most recently added video for a channel."""
+        cursor = await self._execute(
+            "SELECT MAX(fetched_at) as last_updated FROM videos WHERE channel_name = ?",
+            (channel_name,),
+        )
+        row = await cursor.fetchone()
+        return row["last_updated"] if row else None
+
+    async def get_refreshed_at(self, channel_name: str) -> Optional[str]:
+        return await self._get_meta(f"refreshed_at_{channel_name}")
+
+    async def set_refreshed_at(self, channel_name: str) -> None:
+        now = datetime.datetime.utcnow().isoformat()
+        await self._set_meta(f"refreshed_at_{channel_name}", now)
+
+    # ── transcripts ────────────────────────────────────────────────────────────
 
     async def _get_transcript(self, video_id: str) -> Optional[dict]:
         row = await self._execute(
@@ -196,19 +272,21 @@ class CacheService:
 
     async def _set_transcript(self, video_id: str, transcript: dict) -> None:
         now = datetime.datetime.utcnow().isoformat()
-        await self._execute(
-            """
+        await self._execute("""
             INSERT OR REPLACE INTO transcripts (video_id, video_title, lines_json, fetched_at)
             VALUES (?, ?, ?, ?)
-            """,
-            (video_id, transcript.get("title", "Unknown"),
-             json.dumps(transcript.get("lines", [])), now),
-        )
+        """, (video_id, transcript.get("title", "Unknown"),
+              json.dumps(transcript.get("lines", [])), now))
         await self._commit()
 
     async def _delete_transcript(self, video_id: str) -> None:
         await self._execute("DELETE FROM transcripts WHERE video_id = ?", (video_id,))
         await self._commit()
+
+    async def _executemany(self, sql: str, rows: list) -> None:
+        if self._conn is None:
+            raise RuntimeError("CacheService not initialized.")
+        await self._conn.executemany(sql, rows)
 
     # ── metadata ──────────────────────────────────────────────────────────────
 

@@ -1,38 +1,47 @@
 # YouTube Transcript Viewer
 
-Fetch and browse YouTube video transcripts from the [@bycloudAI](https://www.youtube.com/@bycloudAI) channel. No API key required — uses yt-dlp for open-source scraping.
+Browse YouTube video transcripts from the [@bycloudAI](https://www.youtube.com/@bycloudAI), [Fireship](https://www.youtube.com/@Fireship) and [T3](https://www.youtube.com/@t3dotgg) channels. No API key required — uses yt-dlp for open-source scraping.
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  React Frontend │────▶│  FastAPI Backend │────▶│  YouTube/yt-dlp │
-│  (Vite + TS)    │◀────│  + Disk Cache    │◀────│  Scraper        │
-│  Port 3000      │     │  Port 8000       │     └─────────────────┘
-└─────────────────┘     └─────────────────┘
-        │                        │
-        │ nginx serves static   │ JSON TTL cache
-        │ build + proxies /api  │ at /tmp/video_cache
-        ▼                        ▼
-   Browser                  Disk
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  React Frontend  │────▶│  FastAPI Backend │────▶│   YouTube/yt-dlp │
+│  (Vite + TS)     │◀────│  + SQLite Cache   │◀────│   Scraper        │
+│  Port 3000        │     │  Port 8000         │     └──────────────────┘
+└──────────────────┘     └──────────────────┘
+       │                         │
+       │ nginx serves static    │ Persistent SQLite DB
+       │ build + proxies /api    │ at /tmp/yt_transcripts.db
+       ▼                         ▼
+  Browser                    SQLite
 ```
 
 ### Components
 
 | Component | Tech | Port | Description |
 |-----------|------|------|-------------|
-| Frontend | React 18 + Vite + TailwindCSS | 3000 | Dark-themed SPA, serves static build |
-| Backend | FastAPI + Python 3.12 | 8000 | REST API, yt-dlp scraper, cache |
+| Frontend | React 18 + Vite + TailwindCSS | 3000 | Light-themed SPA, serves static build |
+| Backend | FastAPI + Python 3.12 + aiosqlite | 8000 | REST API, yt-dlp scraper, SQLite cache |
 | nginx | Alpine-based | 3000 | Serves frontend build, proxies `/api/*` to backend |
 
-### API Endpoints
+### Channels
+
+| Channel | URL |
+|---------|-----|
+| bycloudAI | https://www.youtube.com/@bycloudAI/videos |
+| Fireship | https://www.youtube.com/@Fireship/videos |
+| T3 | https://www.youtube.com/@t3dotgg/videos |
+
+## API Endpoints
 
 | Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/videos` | GET | List all cached videos from the channel |
-| `/api/videos/{id}/transcript` | GET | Get transcript for a specific video |
-| `/api/refresh` | POST | Trigger background refresh of video list |
-| `/api/health` | GET | Health check |
+|---------|--------|-------------|
+| `/api/videos` | GET | List all cached videos across all channels. Serves instantly from SQLite. |
+| `/api/videos/{id}/transcript` | GET | Get transcript for a specific video. Fetches and caches on first request. |
+| `/api/refresh` | POST | Trigger incremental background refresh of all channels. Returns immediately. |
+| `/api/refresh/{channel_name}` | POST | Refresh a single channel only. |
+| `/api/health` | GET | Health check with cached video count. |
 
 ## Local Development
 
@@ -40,7 +49,7 @@ Fetch and browse YouTube video transcripts from the [@bycloudAI](https://www.you
 
 - Python 3.12+
 - Node.js 22+
-- yt-dlp dependencies (ffprobe/ffmpeg recommended)
+- ffmpeg and curl (for yt-dlp subtitle fetching)
 
 ### Backend
 
@@ -81,7 +90,7 @@ The project deploys as two separate containers on the remote server.
 ### Remote Server Requirements
 
 - Docker installed on remote (`100.119.201.30`)
-- Ports `3000` and `8000` available
+- Ports `3001` and `8001` available
 
 ### Deploy
 
@@ -97,11 +106,11 @@ SERVER=another.server.com USER=ubuntu ./deploy.sh
 
 ### What the deploy script does
 
-1. Builds both Docker images locally
+1. Builds both Docker images locally (multi-stage, non-root)
 2. Saves them as `.tar` files
 3. SCP both images to remote home directory
 4. SSH into remote, load both images into docker
-5. Stop/remove existing containers, start new ones
+5. Stop/remove existing containers, start new ones with volume mount for SQLite DB
 6. Clean up tar files
 
 ### Access
@@ -122,13 +131,13 @@ ssh clement@100.119.201.30 'docker logs -f yt-transcript-frontend'
 ssh clement@100.119.201.30 'docker restart yt-transcript-backend yt-transcript-frontend'
 ```
 
-### Remote Cache
+### SQLite Cache
 
-Video and transcript cache lives at `/home/clement/yt-transcript-app/backend_cache` on the remote server. The cache TTL is 5 minutes (configurable in `backend/app/config.py`).
+The SQLite database lives at `/tmp/yt_transcripts.db` inside the backend container, mounted to `/home/clement/yt-transcript-app/backend_cache/yt_transcripts.db` on the host.
 
-To clear cache:
+To reset all cached data:
 ```bash
-ssh clement@100.119.201.30 'sudo rm -rf /home/clement/yt-transcript-app/backend_cache/*'
+ssh clement@100.119.201.30 'rm -f /home/clement/yt-transcript-app/backend_cache/yt_transcripts.db && docker restart yt-transcript-backend'
 ```
 
 ## Project Structure
@@ -138,16 +147,21 @@ yt-transcript-app/
 ├── deploy.sh                # Remote deployment script
 ├── backend/
 │   ├── app/
-│   │   ├── main.py         # FastAPI entry point
-│   │   ├── config.py       # Settings (channel URL, cache TTL)
-│   │   ├── routers/videos.py
+│   │   ├── __init__.py
+│   │   ├── main.py          # FastAPI entry point + lifespan
+│   │   ├── config.py        # Settings (channels, cache TTL, CORS)
+│   │   ├── routers/
+│   │   │   ├── __init__.py
+│   │   │   └── videos.py    # All /api/* routes
 │   │   ├── services/
-│   │   │   ├── youtube.py  # yt-dlp wrapper
-│   │   │   └── cache.py    # Disk-based JSON cache
-│   │   └── schemas/video.py
+│   │   │   ├── __init__.py
+│   │   │   ├── database.py  # SQLite cache (aiosqlite)
+│   │   │   └── youtube.py   # yt-dlp wrapper + transcript parsing
+│   │   └── schemas/
+│   │       ├── __init__.py
+│   │       └── video.py      # Pydantic models
 │   ├── requirements.txt
-│   ├── Dockerfile
-│   └── run.py
+│   └── Dockerfile            # Multi-stage, non-root user, healthcheck
 └── frontend/
     ├── src/
     │   ├── api/client.ts
@@ -157,30 +171,37 @@ yt-transcript-app/
     │   │   ├── TranscriptViewer.tsx
     │   │   ├── Modal.tsx
     │   │   └── LoadingSpinner.tsx
-    │   ├── hooks/useVideos.ts
     │   ├── types/video.ts
     │   └── App.tsx
     ├── package.json
     ├── tailwind.config.js
-    ├── vite.config.ts       # Proxies /api to localhost:8000
-    ├── nginx.conf           # Production nginx config
+    ├── vite.config.ts        # Proxies /api to localhost:8000
+    ├── nginx.conf            # Production nginx config
     └── Dockerfile
 ```
 
 ## Configuration
 
-Edit `backend/app/config.py`:
+All settings can be overridden via environment variables (prefix `YT_`):
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `channel_url` | `https://www.youtube.com/@bycloudAI/videos` | YouTube channel to scrape |
-| `max_videos` | `50` | Max videos to fetch |
-| `cache_ttl_seconds` | `300` | Cache TTL (5 min) |
-| `cache_dir` | `/tmp/video_cache` | Where cached data is stored |
+| Setting | Env Var | Default | Description |
+|---------|---------|---------|-------------|
+| `db_path` | `YT_DB_PATH` | `/tmp/yt_transcripts.db` | SQLite database path |
+| `cache_ttl_seconds` | `YT_CACHE_TTL_SECONDS` | `300` | Video list cache TTL (unused, refresh is incremental) |
+| `cors_origins` | `YT_CORS_ORIGINS` | localhost + clementpickel.fr | Allowed CORS origins (comma-separated) |
+| `max_videos_per_channel` | `YT_MAX_VIDEOS_PER_CHANNEL` | `10` | Max videos to fetch per channel |
+| Channels | — | bycloudAI, Fireship, T3 | Set via `ChannelConfig` in `config.py` |
+
+## Refresh Behaviour
+
+- **First load**: serves empty list `[]` and fires a background refresh. Page loads instantly.
+- **Incremental refresh** (`POST /api/refresh`): compares upload dates, only inserts genuinely new videos. Existing videos and all transcripts are preserved.
+- **Transcript caching**: transcripts are permanently cached once fetched. They are never invalidated.
+- **`has_transcript` flag**: actually checked per-video via yt-dlp when videos are refreshed (concurrent), rather than assumed true.
 
 ## Tech Stack
 
-- **Backend**: FastAPI, yt-dlp, Pydantic v2, python-dotenv
+- **Backend**: FastAPI, yt-dlp, Pydantic v2, aiosqlite, python-dotenv
 - **Frontend**: React 18, Vite 6, TypeScript, TailwindCSS v3
 - **Proxy/Web server**: nginx (production)
-- **Container**: Docker, python:3.12-slim, node:22-alpine
+- **Container**: Docker, multi-stage python:3.12-slim, node:22-alpine

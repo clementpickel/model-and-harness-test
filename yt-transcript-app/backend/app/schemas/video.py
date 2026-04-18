@@ -3,6 +3,11 @@ from typing import List, Optional
 from datetime import datetime
 
 
+class ChannelConfig(BaseModel):
+    name: str
+    url: str
+
+
 class TranscriptLine(BaseModel):
     start: float
     end: float
