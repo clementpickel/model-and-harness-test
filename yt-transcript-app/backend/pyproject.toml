@@ -11,4 +11,5 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "uvicorn>=0.44.0",
     "yt-dlp>=2026.3.17",
+    "aiosqlite>=0.20.0",
 ]

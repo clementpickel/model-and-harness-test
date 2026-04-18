@@ -2,16 +2,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import videos
 from contextlib import asynccontextmanager
-from app.services.cache import get_cache
+from app.services.database import get_database
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: initialize cache
-    get_cache()
+    # Startup: initialize SQLite DB
+    await get_database()
     yield
-    # Shutdown: cleanup if needed
-    pass
+    # Shutdown: close connection
+    from app.services.database import _cache
+    if _cache:
+        await _cache.close()
 
 
 app = FastAPI(
@@ -24,7 +26,7 @@ app = FastAPI(
 # CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "https://transcript.clementpickel.fr"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -88,7 +88,7 @@ echo "-> Running backend container..."
 docker run -d \
     --name "\${BACKEND_CONTAINER}" \
     -p \${BACKEND_PORT}:8000 \
-    -v "\${REMOTE_DIR}/backend_cache:/tmp/video_cache" \
+    -v "\${REMOTE_DIR}/backend_cache:/tmp" \
     --restart unless-stopped \
     "\${BACKEND_IMAGE}"
 

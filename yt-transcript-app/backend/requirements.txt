@@ -4,3 +4,4 @@ yt-dlp>=2024.4.9
 pydantic>=2.6.0
 pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
+aiosqlite>=0.20.0

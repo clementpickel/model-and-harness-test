@@ -9,7 +9,7 @@ class ChannelConfig(BaseSettings):
 
 class Settings(BaseSettings):
     cache_ttl_seconds: int = 300
-    cache_dir: str = "/tmp/video_cache"
+    db_path: str = "/tmp/yt_transcripts.db"
     channels: list[ChannelConfig] = [
         ChannelConfig(name="bycloudAI", url="https://www.youtube.com/@bycloudAI/videos"),
         ChannelConfig(name="Fireship", url="https://www.youtube.com/@Fireship/videos"),
