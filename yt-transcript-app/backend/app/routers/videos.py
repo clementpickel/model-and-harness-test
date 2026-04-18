@@ -8,7 +8,7 @@ from app.services.youtube import (
     get_channel_videos_with_transcript_check,
     get_video_transcript,
 )
-from app.services.database import get_database
+from app.services.database import get_cache
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ async def _refresh_channel(channel_name: str, channel_url: str) -> int:
     # yt-dlp is sync — run in thread pool
     videos = await get_channel_videos_with_transcript_check(channel_name, channel_url)
 
-    cache = get_database()
+    cache = get_cache()
 
     # First refresh for this channel — insert everything
     max_date = await cache.get_max_upload_date(channel_name)
@@ -77,7 +77,7 @@ async def get_videos():
     Serves immediately from SQLite — no blocking yt-dlp calls.
     If no videos are cached at all, triggers a background refresh.
     """
-    cache = get_database()
+    cache = get_cache()
     all_rows = await cache.get_all_videos()
 
     # First-ever load: cache is empty — fire background refresh, return empty list
@@ -119,7 +119,7 @@ async def get_transcript(video_id: str):
     Get transcript for a specific video.
     Checks the DB cache first; on miss, fetches from YouTube via yt-dlp.
     """
-    cache = get_database()
+    cache = get_cache()
     cached = await cache.get(f"transcript_{video_id}")
     if cached:
         return TranscriptResponse(**cached)
@@ -176,7 +176,7 @@ async def refresh_channel(channel_name: str, background_tasks: BackgroundTasks):
 @router.get("/health")
 async def health_check():
     """Health check endpoint."""
-    cache = get_database()
+    cache = get_cache()
     all_videos = await cache.get_all_videos()
     return {
         "status": "healthy",

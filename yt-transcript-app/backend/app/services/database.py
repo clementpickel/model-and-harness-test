@@ -67,15 +67,16 @@ class CacheService:
         conn.row_factory = aiosqlite.Row
         self._conn = conn
 
-        # Migrate legacy schema if needed
-        await conn.executescript("""
-            -- If the old per-channel JSON cache exists, archive it
-            ALTER TABLE IF EXISTS videos_cache RENAME TO _legacy_videos_cache;
-
-            -- Same for legacy metadata
-            ALTER TABLE IF EXISTS metadata RENAME TO _legacy_metadata;
-        """)
-        await conn.commit()
+        # Migrate legacy schema if needed — SQLite doesn't support ALTER TABLE IF EXISTS,
+        # so we must check the table list first.
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='videos_cache'"
+        )
+        legacy_exists = await cursor.fetchone()
+        if legacy_exists:
+            await conn.execute("ALTER TABLE videos_cache RENAME TO _legacy_videos_cache")
+            await conn.execute("ALTER TABLE metadata RENAME TO _legacy_metadata")
+            await conn.commit()
 
         await conn.executescript("""
             PRAGMA journal_mode = WAL;
